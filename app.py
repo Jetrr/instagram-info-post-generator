@@ -353,12 +353,9 @@ class CarousalCenteredQuoteTemplate(BasePosterTemplate):
 
 class PosterTemplateFactory:
     templates = {
-        'classic': ClassicPosterTemplate,
-        '1': ClassicPosterTemplate,
-        'rightimage': CenterAlignedPosterTemplate,
-        '2': CenterAlignedPosterTemplate,
-        'carousal_center': CarousalCenteredQuoteTemplate,
-        'carousal': CarousalCenteredQuoteTemplate
+        'p1': CenterAlignedPosterTemplate,
+        'p2': ClassicPosterTemplate,
+        'c1': CarousalCenteredQuoteTemplate,
     }
     @classmethod
     def get_template(cls, tid, *args, **kwargs):
