@@ -11,8 +11,8 @@ from google.cloud import storage
 app = Flask(__name__, static_folder="static")
 POSTER_SIZE = (1200, 1500)
 
-MAX_CHAR_WIDTH = 600
-MAX_CHAR_HEIGHT = 900
+MAX_CHAR_WIDTH = 300
+MAX_CHAR_HEIGHT = 600
 MAX_LOGO_WIDTH = 240
 MAX_LOGO_HEIGHT = 240
 
@@ -25,11 +25,12 @@ ORG_WEBSITES = {
     # add more orgs if needed
 }
 
+
 def get_org_website(org):
     return ORG_WEBSITES.get(org.lower(), "")
 
-def upload_file_to_gcs(bucket: str, parent: str, batch: str,
-                       src_local_path: str, dst_name: str) -> str:
+
+def upload_file_to_gcs(bucket: str, parent: str, batch: str, src_local_path: str, dst_name: str) -> str:
     client = storage.Client()
     blob_path = f"{parent}/{batch}/{dst_name}"
     blob = client.bucket(bucket).blob(blob_path)
@@ -37,12 +38,14 @@ def upload_file_to_gcs(bucket: str, parent: str, batch: str,
     blob.upload_from_filename(src_local_path)
     return f"https://storage.googleapis.com/{bucket}/{blob_path}"
 
+
 def hex_to_rgba(hex_str, alpha=255):
     hex_str = hex_str.lstrip('#')
     if len(hex_str) == 3:
         hex_str = ''.join([c*2 for c in hex_str])
     rgb = tuple(int(hex_str[i:i+2], 16) for i in (0,2,4))
     return rgb + (alpha,)
+
 
 def wrap_text(text, font, max_width):
     words, lines, current = text.split(), [], ""
@@ -58,27 +61,42 @@ def wrap_text(text, font, max_width):
         lines.append(current)
     return lines
 
+
 def parse_colored_heading(heading, default_color, font=None, max_width=None):
-    tokens = []
-    parts = re.findall(r'(\[#(?:[A-Fa-f0-9]{3}|[A-Fa-f0-9]{6})\])?([^\s]+)', heading)
-    for color_tag, word in parts:
-        color = color_tag.strip('[]') if color_tag else default_color
-        tokens.append((word, color))
-    if font and max_width:
-        lines, current = [], []
-        for word, color in tokens:
-            trial = current + [(word, color)]
-            test_line = ' '.join(w for w, _ in trial)
-            if font.getbbox(test_line)[2] <= max_width:
-                current.append((word, color))
-            else:
-                if current:
-                    lines.append(current)
-                current = [(word, color)]
-        if current:
-            lines.append(current)
-        return lines
-    return [tokens]
+    """
+    Splits the heading into lines by comma, assigns color if [#abc123] specified before word.
+    Performs wrapping if font+max_width provided.
+    Returns: list of lines, line is list of (word, color).
+    """
+    result_lines = []
+    for raw_line in heading.split(','):
+        tokens = []
+        for match in re.finditer(r'(?:\[(#(?:[A-Fa-f0-9]{3}|[A-Fa-f0-9]{6}))\])?([^\s,]+)', raw_line.strip()):
+            color, word = match.groups()
+            color = "#" + color if color else default_color
+            tokens.append((word, color))
+        if not font or not max_width:
+            result_lines.append(tokens)
+            continue
+        # Wrapping handling
+        linetokens = tokens[:]
+        while linetokens:
+            cur_line = []
+            remaining = linetokens
+            while remaining:
+                test_words = [w for w, _ in cur_line + [remaining[0]]]
+                if font.getbbox(' '.join(test_words))[2] <= max_width:
+                    cur_line.append(remaining[0])
+                    remaining = remaining[1:]
+                else:
+                    break
+            if not cur_line:  # force at least one word per line to avoid infinite loop
+                cur_line.append(linetokens[0])
+                remaining = linetokens[1:]
+            result_lines.append(cur_line)
+            linetokens = remaining
+    return result_lines
+
 
 class PosterContext:
     def __init__(self, *,
@@ -95,6 +113,7 @@ class PosterContext:
         self.subheading = subheading or ""
         self.bg_color = background_color or "#FFF"
         self.highlight = highlight_color or "#1e1e1e"
+
 
 class BasePosterTemplate:
     output_size = POSTER_SIZE
@@ -150,6 +169,7 @@ class BasePosterTemplate:
         except Exception as e:
             print("Swipe arrow could not be loaded:", e)
 
+
 class ClassicPosterTemplate(BasePosterTemplate):
     LEFT_MARGIN = 80
     HEADING_FONT_SIZE = 90
@@ -199,6 +219,7 @@ class ClassicPosterTemplate(BasePosterTemplate):
         self.render_website_bottom_left(bg)
         return bg
 
+
 class CenterAlignedPosterTemplate(BasePosterTemplate):
     TOP_MARGIN = 60
     HEADING_FONT_SIZE = 90
@@ -220,28 +241,7 @@ class CenterAlignedPosterTemplate(BasePosterTemplate):
         font_sub = ImageFont.truetype(os.path.join(self.base, "static", "GolosText-Regular.ttf"), self.SUBHEADING_FONT_SIZE)
         max_text_w = size[0] - 2 * 110
 
-        # Heading lines, per-word color, center aligned
-        heading_lines = []
-        words_colors = []
-        parts = re.findall(r'(\[#(?:[A-Fa-f0-9]{3}|[A-Fa-f0-9]{6})\])?([^\s]+)', ctx.heading)
-        for color_tag, word in parts:
-            color = color_tag.strip('[]') if color_tag else ctx.highlight
-            words_colors.append((word, color))
-        tmp_wc = words_colors[:]
-        while tmp_wc:
-            cline, idx = [], 0
-            while idx < len(tmp_wc):
-                maybe = ' '.join(w for w, _ in cline + [tmp_wc[idx]])
-                if font_main.getbbox(maybe)[2] <= max_text_w:
-                    cline.append(tmp_wc[idx])
-                    idx += 1
-                else:
-                    break
-            if not cline:
-                cline.append(tmp_wc.pop(0))
-                idx = 1
-            heading_lines.append(cline)
-            tmp_wc = tmp_wc[idx:]
+        heading_lines = parse_colored_heading(ctx.heading, ctx.highlight, font=font_main, max_width=max_text_w)
         sub_lines = wrap_text(ctx.subheading, font_sub, max_text_w)
 
         line_height = font_main.getbbox("Ay")[3] - font_main.getbbox("Ay")[1]
@@ -272,12 +272,13 @@ class CenterAlignedPosterTemplate(BasePosterTemplate):
             new_w, new_h = int(orig_w*scale), int(orig_h*scale)
             png = char_img.resize((new_w, new_h), Image.LANCZOS)
             cx = (size[0] - new_w)//2
-            cy = min(size[1] - new_h - 80, y + 30)  # Place below last text, don't overflow
+            cy = min(size[1] - new_h - 80, y + 30)
             bg.paste(png, (cx, cy), png)
 
         self.render_swipe_arrow_bottom_right(bg)
         self.render_website_bottom_left(bg)
         return bg
+
 
 class CarousalCenteredQuoteTemplate(BasePosterTemplate):
     LEFT_MARGIN      = 80
@@ -290,31 +291,6 @@ class CarousalCenteredQuoteTemplate(BasePosterTemplate):
     TOP_MARGIN       = 100
     BOTTOM_MARGIN    = 100
     BG_COLOR         = "#35343A"
-
-    def parse_colored_heading(self, heading, default_color, font, max_width):
-        from re import findall
-        result_lines = []
-        for raw_line in heading.split(','):
-            tokens = []
-            parts = findall(r'(\[#(?:[A-Fa-f0-9]{3}|[A-Fa-f0-9]{6})\])?([^\s]+)', raw_line.strip())
-            for color_tag, word in parts:
-                color = color_tag.strip('[]') if color_tag else default_color
-                tokens.append((word, color))
-            while tokens:
-                cur_line = []
-                test_tokens = tokens.copy()
-                while test_tokens:
-                    maybe = ' '.join(w for w, _ in cur_line + [test_tokens[0]])
-                    if font.getbbox(maybe)[2] <= max_width:
-                        cur_line.append(test_tokens.pop(0))
-                    else:
-                        if cur_line: break
-                        cur_line.append(test_tokens.pop(0))
-                        break
-                if cur_line:
-                    result_lines.append(cur_line)
-                tokens = tokens[len(cur_line):]
-        return result_lines
 
     def render_logo(self, bg):
         icon = Image.open(self.logo_path).convert("RGBA")
@@ -332,7 +308,7 @@ class CarousalCenteredQuoteTemplate(BasePosterTemplate):
 
         font_main = ImageFont.truetype(os.path.join(self.base, "static", "GolosText-Bold.ttf"), self.HEADING_FONT_SIZE)
         max_text_w = size[0] - 2 * self.SIDE_MARGIN
-        heading_lines = self.parse_colored_heading(ctx.heading, ctx.highlight, font_main, max_text_w)
+        heading_lines = parse_colored_heading(ctx.heading, ctx.highlight, font=font_main, max_width=max_text_w)
         line_height = font_main.getbbox("Ay")[3] - font_main.getbbox("Ay")[1]
         total_block_height = len(heading_lines) * (line_height + 16)
         y_start = (size[1] - total_block_height) // 2
@@ -351,6 +327,7 @@ class CarousalCenteredQuoteTemplate(BasePosterTemplate):
         self.render_swipe_arrow_bottom_right(bg)
         return bg
 
+
 class PosterTemplateFactory:
     templates = {
         'p1': CenterAlignedPosterTemplate,
@@ -362,6 +339,7 @@ class PosterTemplateFactory:
         T = cls.templates.get(str(tid).lower())
         if not T: raise ValueError(f"Invalid poster_template_id: {tid}")
         return T(*args, **kwargs)
+
 
 @app.route('/generate', methods=['POST'])
 def generate():
@@ -395,7 +373,7 @@ def generate():
         for idx, citem in enumerate(data.get("carousal", [])):
             carousal_highlight = citem.get("carousal_font_color") or citem.get("carousal_highlight_color") or "#fff"
             cctx = PosterContext(
-                template_id=citem.get("carousal_template_id", "carousal_center"),
+                template_id=citem.get("carousal_template_id", "c1"),
                 organization=citem.get("organization", data.get("organization", "")),
                 heading=citem.get("carousal_heading", ""),
                 subheading=citem.get("carousal_subheading", ""),
@@ -425,6 +403,7 @@ def generate():
         return jsonify({"error": str(fnf)}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 if __name__ == '__main__':
     app.run('0.0.0.0', 8080)
