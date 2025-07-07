@@ -22,7 +22,7 @@ GCS_PARENT_FOLDER = "instagram-image-posts"
 ORG_WEBSITES = {
     "nerdii": "nerdii.co",
     "gaper": "gaper.io",
-    # add more orgs if needed
+    "accountsgpt": "accountsgpt.com"
 }
 
 
